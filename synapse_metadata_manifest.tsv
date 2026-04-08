@@ -1,0 +1,15 @@
+path	parent	name	id	synapseStore	contentType	used	executed	activityName	activityDescription
+./Data\BraTS-GLI		ASNR-MICCAI-BraTS2023-GLI-Challenge-TrainingData.zip	syn51514132	True					
+./Data\BraTS-GLI		ASNR-MICCAI-BraTS2023-GLI-Challenge-ValidationData.zip	syn51514110	True					
+./Data\BraTS-GLI		BraTS2023_2017_GLI_Mapping.xlsx	syn51615438	True					
+./Data\BraTS-Local-Inpainting		README.md	syn68156593	True					
+./Data\BraTS-MEN		ASNR-MICCAI-BraTS2023-MEN-Challenge-TrainingData.zip	syn51514055	True					
+./Data\BraTS-MEN		ASNR-MICCAI-BraTS2023-MEN-Challenge-ValidationData.zip	syn51930467	True					
+./Data\BraTS-MEN		BraTS-MEN-TRAIN-FIX-V4.zip	syn51718026	True					
+./Data\BraTS-MEN		Meningioma supplementary clinical data and imaging parameters for training and validation sets.xlsx	syn58633127	True					
+./Data\BraTS-MET		README.md	syn68155922	True					
+./Data\BraTS-PED		ASNR-MICCAI-BraTS2023-PED-Challenge-TrainingData.zip	syn51615054	True					
+./Data\BraTS-PED		ASNR-MICCAI-BraTS2023-PED-Challenge-ValidationData.zip	syn51929861	True					
+./Data\BraTS-SSA		README.md	syn68155505	True					
+./Data\Sample Dataset MLCubes		BraTS-GLI-fastlane.tar.gz	syn52276402	True					
+./Data\Sample Dataset MLCubes		BraTS-Local-Synthesis-fastlane.tar.gz	syn52276405	True					
