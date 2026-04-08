@@ -1,0 +1,21 @@
+services:
+  # Backend Service
+  - type: web
+    name: brain-tumor-backend
+    runtime: python
+    plan: free
+    region: oregon
+    rootDir: objective3_interface/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        value: sqlite:///./brain_tumor.db
+      - key: SECRET_KEY
+        value: brain-tumor-segmentation-secret-key-2024
+    healthCheckPath: /health
+    autoDeploy: true
