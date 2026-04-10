@@ -22,6 +22,20 @@ from passlib.context import CryptContext
 from fastapi.security import OAuth2PasswordBearer
 import secrets
 
+import gdown
+
+# Download model from Google Drive if not present
+MODEL_PATH = "unet_dice_080.h5"
+GDRIVE_FILE_ID = "1P1sKo1lJfoiMRQfeg6UM2Q6XgR8GbiV8"
+
+if not os.path.exists(MODEL_PATH):
+    print("Downloading model from Google Drive...")
+    gdown.download(
+        f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}",
+        MODEL_PATH,
+        quiet=False
+    )
+
 from preprocessing import preprocess_mri, postprocess_mask, create_overlay
 from model_utils import dummy_segmentation
 from model.unet import get_model
@@ -312,19 +326,16 @@ def create_fragments(image_array: np.ndarray, rows: int = 2, cols: int = 2):
 
 
 def get_tumor_location(mask):
-    """Determine tumor location based on mask centroid"""
     if np.sum(mask > 0.5) == 0:
         return "No tumor detected"
-    
+
     y_indices, x_indices = np.where(mask > 0.5)
     centroid_y = np.mean(y_indices) / mask.shape[0]
     centroid_x = np.mean(x_indices) / mask.shape[1]
-    
-    # Determine quadrant
+
     vertical = "superior" if centroid_y < 0.5 else "inferior"
     horizontal = "left" if centroid_x < 0.5 else "right"
-    
-    # Determine region
+
     if 0.3 < centroid_x < 0.7 and 0.3 < centroid_y < 0.7:
         region = "central"
     elif centroid_y < 0.3:
@@ -333,12 +344,11 @@ def get_tumor_location(mask):
         region = "occipital"
     else:
         region = "parietal"
-    
+
     return f"{vertical.capitalize()} {horizontal} {region} region"
 
 
 def encode_image_to_base64(image_array):
-    """Convert numpy array to base64 encoded PNG"""
     if image_array.dtype != np.uint8:
         image_array = (image_array * 255).astype(np.uint8)
 
@@ -348,7 +358,7 @@ def encode_image_to_base64(image_array):
         image = Image.fromarray(image_array, mode="RGBA").convert("RGB")
     else:
         image = Image.fromarray(image_array, mode="RGB")
-    
+
     buffer = BytesIO()
     image.save(buffer, format='PNG')
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
@@ -465,7 +475,6 @@ def build_report_html(
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
     return {"status": "healthy", "message": "Brain Tumor Segmentation API is running"}
 
 
@@ -490,10 +499,6 @@ async def register(
 
     if len(password) > 128:
         raise HTTPException(status_code=400, detail="Password is too long")
-
-    # Basic strong password rules
-    # - at least 8 characters
-    # - at least 1 uppercase, 1 lowercase, 1 number, 1 symbol
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     if not any(c.islower() for c in password):
@@ -633,7 +638,6 @@ async def forgot_password(username: str = Form(...)):
     finally:
         conn.close()
 
-    # Demo-mode: return the token directly. In production you'd email/SMS this.
     return {"success": True, "reset_token": token, "expires_in_minutes": 15}
 
 
@@ -684,19 +688,11 @@ async def reset_password(
 
         password_hash = _hash_password(new_password)
         conn.execute(
-            """
-            UPDATE users
-            SET password_hash = ?
-            WHERE username = ?
-            """,
+            "UPDATE users SET password_hash = ? WHERE username = ?",
             (password_hash, str(row["username"])),
         )
         conn.execute(
-            """
-            UPDATE password_resets
-            SET used = 1
-            WHERE id = ?
-            """,
+            "UPDATE password_resets SET used = 1 WHERE id = ?",
             (int(row["id"]),),
         )
         conn.commit()
@@ -738,11 +734,7 @@ async def change_password(
     conn = _db_connect()
     try:
         conn.execute(
-            """
-            UPDATE users
-            SET password_hash = ?
-            WHERE username = ?
-            """,
+            "UPDATE users SET password_hash = ? WHERE username = ?",
             (password_hash, current_user.username),
         )
         conn.commit()
@@ -766,54 +758,38 @@ async def upload_and_segment(
     flip_tta: bool = Form(False),
     return_report: bool = Form(True),
 ):
-    """
-    Upload MRI image and perform tumor segmentation
-    
-    Returns:
-        - original_image: Base64 encoded original image
-        - segmented_image: Base64 encoded segmentation overlay
-        - mask_image: Base64 encoded binary mask
-        - tumor_area: Percentage of image area occupied by tumor
-        - confidence: Model confidence score
-        - location: Estimated tumor location
-        - prognosis_data: Additional prognosis information
-    """
-    # Validate file type
     allowed_types = ["image/jpeg", "image/png", "image/bmp", "image/tiff"]
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid file type. Allowed types: {', '.join(allowed_types)}"
         )
-    
+
     try:
-        # Read image bytes
         image_bytes = await file.read()
-        
-        # Preprocess image
+
         preprocessed, original = preprocess_mri(
             image_bytes,
             clahe_clip_limit=clahe_clip_limit,
             denoise=denoise,
             gamma=gamma,
         )
-        
-        # Perform segmentation (dummy for now, replace with model inference)
-        # When weights are available:
-        # global model
-        # if model is None:
-        #     model = get_model(weights_path="path/to/weights.h5")
-        # mask = model.predict(np.expand_dims(preprocessed, axis=0))[0]
-        # mask = mask[:, :, 0]
 
-        mask, confidence, tumor_area = analyze_mri(preprocessed)
+        global model
+        if model is None:
+            model = get_model(weights_path=MODEL_PATH)
+        mask = model.predict(np.expand_dims(preprocessed, axis=0))[0]
+        mask = mask[:, :, 0]
+        confidence = float(np.max(mask))
+        tumor_area = float(np.sum(mask > 0.5) / mask.size * 100)
+
         if flip_tta:
             flipped = np.flip(preprocessed, axis=1)
-            mask_f, confidence_f, tumor_area_f = analyze_mri(flipped)
-            mask_f = np.flip(mask_f, axis=1)
+            mask_f = model.predict(np.expand_dims(flipped, axis=0))[0]
+            mask_f = np.flip(mask_f[:, :, 0], axis=1)
             mask = (mask + mask_f) / 2.0
-            confidence = float((confidence + confidence_f) / 2.0)
-            tumor_area = float((tumor_area + tumor_area_f) / 2.0)
+            confidence = float(np.max(mask))
+            tumor_area = float(np.sum(mask > 0.5) / mask.size * 100)
 
         full_mask, overlay, location, prognosis_data = identify_tumor(
             original=original,
@@ -822,7 +798,7 @@ async def upload_and_segment(
             tumor_area=tumor_area,
             overlay_alpha=overlay_alpha,
         )
-        
+
         created_at = datetime.now(timezone.utc).isoformat()
         conn = _db_connect()
         try:
@@ -880,20 +856,19 @@ async def upload_and_segment(
             response_payload["fragments"] = create_fragments(original)
 
         return JSONResponse(response_payload)
-        
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 
 @app.get("/model/info")
 async def model_info():
-    """Get information about the segmentation model"""
     return {
         "architecture": "U-Net",
         "input_shape": [128, 128, 1],
         "output_classes": 1,
         "preprocessing": ["Resize to 128x128", "CLAHE contrast enhancement", "Normalization"],
-        "weights_loaded": False,
+        "weights_loaded": model is not None,
         "version": "1.0.0"
     }
 
