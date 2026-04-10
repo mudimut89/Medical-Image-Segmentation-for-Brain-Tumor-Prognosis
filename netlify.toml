@@ -1,5 +1,5 @@
 # Netlify configuration file
 
 [build]
-  command = "cd objective3_interface/frontend && npm install && npm run build"
-  publish = "objective3_interface/frontend/build"
+  publish = "frontend/dist"
+  command = "cd frontend && npm install && npm run build"
