@@ -3,7 +3,10 @@ U-Net Architecture for Brain Tumor Segmentation
 Based on Chapter 3 documentation specifications
 """
 
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except ImportError:
+    tf = None
 from tensorflow.keras import layers, Model
 
 
