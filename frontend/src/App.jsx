@@ -21,7 +21,7 @@ import {
   EyeOff
 } from 'lucide-react';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'https://medical-image-segmentation-for-brain-hq5b.onrender.com';
 
 function getStoredToken() {
   try {
