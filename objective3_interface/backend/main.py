@@ -23,9 +23,12 @@ import asyncio
 from pydantic import BaseModel
 
 # Import our optimized model
-import sys
-sys.path.append("../objective2_model")
-from model_architecture import get_model_with_dice_target
+try:
+    import sys
+    sys.path.append("../objective2_model")
+    from model_architecture import get_model_with_dice_target
+except ImportError:
+    get_model_with_dice_target = None
 
 logger = logging.getLogger(__name__)
 
@@ -98,38 +101,29 @@ class ClinicalResponse(BaseModel):
 
 class ClinicalDecisionSupport:
     """Clinical decision support system"""
-    
+
     @staticmethod
     def assess_tumor_severity(tumor_size_mm: float, location: str) -> str:
-        """Assess tumor severity based on size and location"""
-        # Size-based severity
         size_severity = "low"
         for category, config in CLINICAL_CONFIG["tumor_size_categories"].items():
             if tumor_size_mm <= config["max_mm"]:
                 size_severity = config["severity"]
                 break
-        
-        # Location-based risk
         location_risk = CLINICAL_CONFIG["location_risk_factors"].get(location.lower(), "moderate")
-        
-        # Combine assessments
         if size_severity == "high" or location_risk == "high":
             return "high"
         elif size_severity == "moderate" or location_risk == "moderate":
             return "moderate"
         else:
             return "low"
-    
+
     @staticmethod
     def generate_recommendations(severity: str, tumor_detected: bool) -> List[str]:
-        """Generate clinical recommendations"""
         recommendations = []
-        
         if not tumor_detected:
             recommendations.append("No tumor detected - routine follow-up recommended")
             recommendations.append("Consider repeat imaging in 6-12 months if symptoms persist")
             return recommendations
-        
         if severity == "high":
             recommendations.extend([
                 "Immediate neurosurgical consultation recommended",
@@ -143,18 +137,16 @@ class ClinicalDecisionSupport:
                 "Follow-up MRI in 3 months",
                 "Consider stereotactic biopsy if growth detected"
             ])
-        else:  # low severity
+        else:
             recommendations.extend([
                 "Routine neurology follow-up in 1-2 months",
                 "Surveillance MRI in 6 months",
                 "Monitor for symptom changes"
             ])
-        
         return recommendations
-    
+
     @staticmethod
     def determine_follow_up_time(severity: str) -> str:
-        """Determine recommended follow-up time"""
         follow_up_schedule = {
             "high": "1-2 weeks",
             "moderate": "4-6 weeks",
@@ -162,12 +154,23 @@ class ClinicalDecisionSupport:
         }
         return follow_up_schedule.get(severity, "3 months")
 
+
 def load_model():
     """Load the optimized U-Net model"""
     global model, model_loaded
-    
+
     try:
+        if get_model_with_dice_target is None:
+            logger.warning("Model architecture not available - running in demo mode")
+            model_loaded = False
+            return
+
         model_path = "../objective2_model/models/unet_dice_080.h5"
+        if not Path(model_path).exists():
+            logger.warning("Model weights not found - running in demo mode")
+            model_loaded = False
+            return
+
         model = get_model_with_dice_target(
             target_dice=CLINICAL_CONFIG["target_dice"],
             weights_path=model_path
@@ -178,77 +181,38 @@ def load_model():
         logger.error(f"Failed to load model: {e}")
         model_loaded = False
 
+
 def preprocess_mri_image(image_bytes: bytes) -> np.ndarray:
-    """
-    Enhanced preprocessing for clinical MRI images
-    
-    Args:
-        image_bytes: Raw image bytes
-        
-    Returns:
-        Preprocessed image array
-    """
     try:
-        # Load image
         image = Image.open(io.BytesIO(image_bytes))
-        
-        # Convert to grayscale if needed
         if image.mode != 'L':
             image = image.convert('L')
-        
-        # Convert to numpy array
         image_array = np.array(image)
-        
-        # Resize to target size
         target_size = (128, 128)
         resized = cv2.resize(image_array, target_size, interpolation=cv2.INTER_AREA)
-        
-        # Apply CLAHE for contrast enhancement
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         enhanced = clahe.apply(resized)
-        
-        # Normalize to [0, 1]
         normalized = enhanced.astype(np.float32) / 255.0
-        
-        # Add channel dimension
         preprocessed = np.expand_dims(normalized, axis=-1)
-        
         return preprocessed
-        
     except Exception as e:
         logger.error(f"Preprocessing failed: {e}")
         raise HTTPException(status_code=400, detail=f"Image preprocessing failed: {e}")
 
+
 def calculate_tumor_metrics(mask: np.ndarray, pixel_spacing: float = 1.0) -> Dict:
-    """
-    Calculate clinical tumor metrics
-    
-    Args:
-        mask: Binary segmentation mask
-        pixel_spacing: Pixel spacing in mm
-        
-    Returns:
-        Tumor metrics dictionary
-    """
-    # Basic metrics
     tumor_pixels = np.sum(mask > 0.5)
     total_pixels = mask.size
     tumor_percentage = (tumor_pixels / total_pixels) * 100
-    
-    # Size calculations
     pixel_area = pixel_spacing ** 2
     tumor_area_mm2 = tumor_pixels * pixel_area
-    
-    # Approximate volume (assuming spherical shape)
     if tumor_pixels > 0:
-        # Calculate equivalent radius
         equivalent_radius_mm = np.sqrt(tumor_area_mm2 / np.pi)
         tumor_volume_mm3 = (4/3) * np.pi * (equivalent_radius_mm ** 3)
-        tumor_size_mm = equivalent_radius_mm * 2  # Diameter
+        tumor_size_mm = equivalent_radius_mm * 2
     else:
         tumor_volume_mm3 = 0.0
         tumor_size_mm = 0.0
-    
     return {
         "tumor_pixels": int(tumor_pixels),
         "tumor_percentage": float(tumor_percentage),
@@ -257,61 +221,32 @@ def calculate_tumor_metrics(mask: np.ndarray, pixel_spacing: float = 1.0) -> Dic
         "tumor_size_mm": float(tumor_size_mm)
     }
 
+
 def predict_tumor_location(mask: np.ndarray) -> str:
-    """
-    Predict tumor location based on mask position
-    
-    Args:
-        mask: Binary segmentation mask
-        
-    Returns:
-        Predicted location string
-    """
-    # Find center of mass
     y_coords, x_coords = np.where(mask > 0.5)
-    
     if len(y_coords) == 0:
         return "No tumor detected"
-    
     center_y = np.mean(y_coords)
     center_x = np.mean(x_coords)
-    
     height, width = mask.shape[:2]
-    
-    # Simple location classification
     if center_y < height * 0.33:
         vertical = "superior"
     elif center_y > height * 0.67:
         vertical = "inferior"
     else:
         vertical = "middle"
-    
     if center_x < width * 0.33:
         horizontal = "left"
     elif center_x > width * 0.67:
         horizontal = "right"
     else:
         horizontal = "central"
-    
     return f"{vertical} {horizontal}"
 
+
 def generate_clinical_analysis(mask: np.ndarray, confidence: float) -> TumorAnalysis:
-    """
-    Generate comprehensive clinical analysis
-    
-    Args:
-        mask: Segmentation mask
-        confidence: Model confidence
-        
-    Returns:
-        Clinical analysis object
-    """
-    # Calculate tumor metrics
     metrics = calculate_tumor_metrics(mask)
-    
-    # Determine if tumor detected
     tumor_detected = metrics["tumor_pixels"] > 0 and confidence > CLINICAL_CONFIG["confidence_threshold"]
-    
     if not tumor_detected:
         return TumorAnalysis(
             tumor_detected=False,
@@ -324,24 +259,13 @@ def generate_clinical_analysis(mask: np.ndarray, confidence: float) -> TumorAnal
             follow_up_time=None,
             clinical_notes="No significant tumor detected in the provided MRI scan."
         )
-    
-    # Predict location
     location = predict_tumor_location(mask)
-    
-    # Assess severity
     severity = ClinicalDecisionSupport.assess_tumor_severity(metrics["tumor_size_mm"], location)
-    
-    # Generate recommendations
     recommendations = ClinicalDecisionSupport.generate_recommendations(severity, True)
-    
-    # Determine follow-up time
     follow_up_time = ClinicalDecisionSupport.determine_follow_up_time(severity)
-    
-    # Generate clinical notes
     clinical_notes = f"Tumor detected with {confidence:.1%} confidence. "
-    clinical_notes += f"Size: {metrics['tumor_size_mm']:.1f}mm, Volume: {metrics['tumor_volume_mm3']:.1f}mm³. "
+    clinical_notes += f"Size: {metrics['tumor_size_mm']:.1f}mm, Volume: {metrics['tumor_volume_mm3']:.1f}mm3. "
     clinical_notes += f"Location: {location}. Severity assessed as {severity}."
-    
     return TumorAnalysis(
         tumor_detected=True,
         confidence=confidence,
@@ -354,15 +278,15 @@ def generate_clinical_analysis(mask: np.ndarray, confidence: float) -> TumorAnal
         clinical_notes=clinical_notes
     )
 
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the API"""
     logger.info("Starting Brain Tumor Segmentation API v3.0")
     load_model()
 
+
 @app.get("/")
 async def root():
-    """Root endpoint"""
     return {
         "message": "Brain Tumor Segmentation API v3.0",
         "version": "3.0.0",
@@ -371,21 +295,20 @@ async def root():
         "target_dice": CLINICAL_CONFIG["target_dice"]
     }
 
+
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "model_loaded": model_loaded,
         "timestamp": datetime.datetime.now().isoformat()
     }
 
+
 @app.get("/model/info")
 async def model_info():
-    """Get model information"""
     if not model_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
     return {
         "model_type": "Optimized U-Net",
         "target_dice": CLINICAL_CONFIG["target_dice"],
@@ -401,6 +324,7 @@ async def model_info():
         ]
     }
 
+
 @app.post("/analyze", response_model=ClinicalResponse)
 async def analyze_mri(
     background_tasks: BackgroundTasks,
@@ -409,38 +333,20 @@ async def analyze_mri(
     scan_type: Optional[str] = None,
     clinical_notes: Optional[str] = None
 ):
-    """
-    Analyze MRI scan for tumor detection and clinical assessment
-    """
     if not model_loaded:
-        raise HTTPException(status_code=503, detail="Model not loaded")
-    
-    # Validate file
+        raise HTTPException(status_code=503, detail="Model not loaded - running in demo mode")
     if not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File must be an image")
-    
     start_time = datetime.datetime.now()
     analysis_id = str(uuid.uuid4())
-    
     try:
-        # Read and preprocess image
         image_bytes = await file.read()
         preprocessed = preprocess_mri_image(image_bytes)
-        
-        # Make prediction
         prediction = model.predict(np.expand_dims(preprocessed, axis=0), verbose=0)[0]
         mask = (prediction > 0.5).astype(np.float32)
-        
-        # Calculate confidence
         confidence = float(np.mean(prediction))
-        
-        # Generate clinical analysis
         tumor_analysis = generate_clinical_analysis(mask, confidence)
-        
-        # Calculate processing time
         processing_time = (datetime.datetime.now() - start_time).total_seconds()
-        
-        # Create response
         response = ClinicalResponse(
             analysis_id=analysis_id,
             timestamp=start_time.isoformat(),
@@ -452,64 +358,48 @@ async def analyze_mri(
                 "original_shape": preprocessed.shape
             },
             processing_time=processing_time,
-            dice_coefficient=None  # Would need ground truth for this
+            dice_coefficient=None
         )
-        
-        # Save to history (background task)
         background_tasks.add_task(save_analysis_history, response)
-        
         return response
-        
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
+
 async def save_analysis_history(analysis: ClinicalResponse):
-    """Save analysis to history (background task)"""
     try:
         analysis_history.append(analysis.dict())
-        
-        # Keep only last 1000 analyses
         if len(analysis_history) > 1000:
             analysis_history.pop(0)
-        
-        # Save to file periodically
         if len(analysis_history) % 10 == 0:
-            history_file = Path("objective3_interface/backend/analysis_history.json")
-            history_file.parent.mkdir(parents=True, exist_ok=True)
-            
+            history_file = Path("analysis_history.json")
             with open(history_file, 'w') as f:
                 json.dump(analysis_history, f, indent=2, default=str)
-                
     except Exception as e:
         logger.error(f"Failed to save analysis history: {e}")
 
+
 @app.get("/history")
 async def get_analysis_history(limit: int = 50):
-    """Get analysis history"""
     return {
         "total_analyses": len(analysis_history),
         "recent_analyses": analysis_history[-limit:] if analysis_history else []
     }
 
+
 @app.get("/statistics")
 async def get_statistics():
-    """Get analysis statistics"""
     if not analysis_history:
         return {"message": "No analysis history available"}
-    
-    # Calculate statistics
     total_analyses = len(analysis_history)
     tumors_detected = sum(1 for a in analysis_history if a["tumor_analysis"]["tumor_detected"])
-    
     severity_counts = {}
     for analysis in analysis_history:
         severity = analysis["tumor_analysis"]["severity"]
         if severity:
             severity_counts[severity] = severity_counts.get(severity, 0) + 1
-    
     avg_processing_time = np.mean([a["processing_time"] for a in analysis_history])
-    
     return {
         "total_analyses": total_analyses,
         "tumors_detected": tumors_detected,
@@ -519,6 +409,7 @@ async def get_statistics():
         "model_target_dice": CLINICAL_CONFIG["target_dice"]
     }
 
+
 @app.post("/feedback")
 async def submit_feedback(
     analysis_id: str,
@@ -526,7 +417,6 @@ async def submit_feedback(
     feedback_text: str,
     rating: Optional[int] = None
 ):
-    """Submit clinical feedback for analysis"""
     try:
         feedback_data = {
             "analysis_id": analysis_id,
@@ -535,32 +425,24 @@ async def submit_feedback(
             "rating": rating,
             "timestamp": datetime.datetime.now().isoformat()
         }
-        
-        # Save feedback
-        feedback_file = Path("objective3_interface/backend/clinical_feedback.json")
-        feedback_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Load existing feedback
+        feedback_file = Path("clinical_feedback.json")
         feedback_list = []
         if feedback_file.exists():
             with open(feedback_file, 'r') as f:
                 feedback_list = json.load(f)
-        
         feedback_list.append(feedback_data)
-        
         with open(feedback_file, 'w') as f:
             json.dump(feedback_list, f, indent=2, default=str)
-        
         return {"message": "Feedback submitted successfully", "feedback_id": str(uuid.uuid4())}
-        
     except Exception as e:
         logger.error(f"Failed to submit feedback: {e}")
         raise HTTPException(status_code=500, detail="Failed to submit feedback")
 
+
 @app.get("/clinical/config")
 async def get_clinical_config():
-    """Get clinical configuration"""
     return CLINICAL_CONFIG
+
 
 if __name__ == "__main__":
     uvicorn.run(
