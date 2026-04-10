@@ -1,0 +1,27 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - cd objective3_interface/frontend
+        - npm ci
+    build:
+      commands:
+        - cd objective3_interface/frontend
+        - npm run build
+  artifacts:
+    baseDirectory: objective3_interface/frontend/dist
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - objective3_interface/frontend/node_modules/**/*
+  customHeaders:
+    - pattern: '**/*'
+      headers:
+        - key: Cache-Control
+          value: 'no-cache, no-store, must-revalidate'
+  redirects:
+    - source: '/<*>'
+      status: '404-200'
+      target: '/index.html'

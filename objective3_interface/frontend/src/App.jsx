@@ -1,14 +1,18 @@
-import React, { useState } from 'react';
-import { Brain, Activity, Settings, History, HelpCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Brain, Activity, Settings, History, HelpCircle, LogOut, User } from 'lucide-react';
 import MRIUploader from './components/MRIUploader';
 import TumorViewer from './components/TumorViewer';
 import OutcomePanel from './components/OutcomePanel';
+import AuthPanel from './components/AuthPanel';
+import authService from './services/authService';
 
 function App() {
   const [currentView, setCurrentView] = useState('upload');
   const [analysisData, setAnalysisData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(null);
 
   const handleAnalysisComplete = (data) => {
     setAnalysisData(data);
@@ -39,6 +43,33 @@ function App() {
     console.log('Sharing results:', data);
     alert('Share functionality would open sharing options');
   };
+
+  const handleAuthSuccess = (authData) => {
+    setIsAuthenticated(true);
+    setUser(authData.user_data);
+    setCurrentView('upload');
+  };
+
+  const handleLogout = async () => {
+    await authService.logout();
+    setIsAuthenticated(false);
+    setUser(null);
+    setAnalysisData(null);
+    setCurrentView('upload');
+  };
+
+  // Check authentication on mount
+  useEffect(() => {
+    if (authService.isAuthenticated()) {
+      setIsAuthenticated(true);
+      setUser(authService.getUser());
+    }
+  }, []);
+
+  // Show auth panel if not authenticated
+  if (!isAuthenticated) {
+    return <AuthPanel onAuthSuccess={handleAuthSuccess} />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -84,6 +115,33 @@ function App() {
                   View Results
                 </button>
               )}
+
+              {/* User Menu */}
+              <div className="relative group">
+                <button className="flex items-center space-x-2 px-3 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+                  <User className="w-4 h-4 text-gray-600" />
+                  <span className="text-sm font-medium text-gray-700">
+                    {user?.full_name || 'User'}
+                  </span>
+                </button>
+                
+                {/* Dropdown Menu */}
+                <div className="absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+                  <div className="py-1">
+                    <div className="px-4 py-2 border-b border-gray-100">
+                      <p className="text-sm font-medium text-gray-900">{user?.email}</p>
+                      <p className="text-xs text-gray-500">Member since {new Date(user?.created_at).toLocaleDateString()}</p>
+                    </div>
+                    <button
+                      onClick={handleLogout}
+                      className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-red-50 hover:text-red-700 transition-colors flex items-center space-x-2"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Sign Out</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

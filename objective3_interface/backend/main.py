@@ -3,10 +3,11 @@ Objective 3: Enhanced Backend API with Clinical Focus
 FastAPI backend optimized for MRI scanner integration and tumor outcome display
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import uvicorn
 import numpy as np
 import cv2
@@ -21,6 +22,13 @@ import datetime
 import uuid
 import asyncio
 from pydantic import BaseModel
+import jwt
+
+# Import authentication
+from auth import (
+    UserRegistration, UserLogin, AuthResponse, 
+    register_user, login_user, get_user_by_token
+)
 
 # Import our optimized model
 import sys
@@ -51,6 +59,29 @@ app.add_middleware(
 model = None
 model_loaded = False
 analysis_history = []
+
+# Security
+security = HTTPBearer()
+
+# Dependency to get current user
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user = get_user_by_token(token)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return user
 
 # Clinical configuration
 CLINICAL_CONFIG = {
@@ -354,9 +385,46 @@ def generate_clinical_analysis(mask: np.ndarray, confidence: float) -> TumorAnal
         clinical_notes=clinical_notes
     )
 
+# Authentication endpoints
+@app.post("/auth/register", response_model=AuthResponse)
+async def register_user_endpoint(registration: UserRegistration):
+    """Register new user"""
+    try:
+        result = register_user(registration)
+        return result
+    except Exception as e:
+        logger.error(f"Registration failed: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed")
+
+@app.post("/auth/login", response_model=AuthResponse)
+async def login_user_endpoint(login: UserLogin):
+    """Login user"""
+    try:
+        result = login_user(login)
+        return result
+    except Exception as e:
+        logger.error(f"Login failed: {e}")
+        raise HTTPException(status_code=500, detail="Login failed")
+
+@app.get("/auth/me")
+async def get_current_user_info(current_user = Depends(get_current_user)):
+    """Get current user info"""
+    return {
+        "user_id": current_user.user_id,
+        "email": current_user.email,
+        "full_name": current_user.full_name,
+        "created_at": current_user.created_at.isoformat(),
+        "is_active": current_user.is_active
+    }
+
+@app.post("/auth/logout")
+async def logout_user():
+    """Logout user (client-side token removal)"""
+    return {"message": "Logout successful. Please remove token from client."}
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the API"""
+    """Initialize API"""
     logger.info("Starting Brain Tumor Segmentation API v3.0")
     load_model()
 
@@ -368,7 +436,8 @@ async def root():
         "version": "3.0.0",
         "status": "operational",
         "model_loaded": model_loaded,
-        "target_dice": CLINICAL_CONFIG["target_dice"]
+        "target_dice": CLINICAL_CONFIG["target_dice"],
+        "auth_enabled": True
     }
 
 @app.get("/health")
