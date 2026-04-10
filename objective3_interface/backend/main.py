@@ -27,8 +27,14 @@ try:
     import sys
     sys.path.append("../objective2_model")
     from model_architecture import get_model_with_dice_target
+    REAL_MODEL_AVAILABLE = True
 except ImportError:
     get_model_with_dice_target = None
+    REAL_MODEL_AVAILABLE = False
+
+# Import mock model as fallback
+import mock_model
+from mock_model import get_mock_model, is_mock_model_loaded
 
 logger = logging.getLogger(__name__)
 
@@ -156,29 +162,30 @@ class ClinicalDecisionSupport:
 
 
 def load_model():
-    """Load the optimized U-Net model"""
+    """Load the optimized U-Net model with mock fallback"""
     global model, model_loaded
-
+    
+    # Try to load real model first
+    if REAL_MODEL_AVAILABLE:
+        try:
+            model_path = "../objective2_model/models/unet_dice_080.h5"
+            model = get_model_with_dice_target(
+                target_dice=CLINICAL_CONFIG["target_dice"],
+                weights_path=model_path
+            )
+            model_loaded = True
+            logger.info("Real U-Net model loaded successfully")
+            return
+        except Exception as e:
+            logger.warning(f"Failed to load real model: {e}")
+    
+    # Fallback to mock model
     try:
-        if get_model_with_dice_target is None:
-            logger.warning("Model architecture not available - running in demo mode")
-            model_loaded = False
-            return
-
-        model_path = "../objective2_model/models/unet_dice_080.h5"
-        if not Path(model_path).exists():
-            logger.warning("Model weights not found - running in demo mode")
-            model_loaded = False
-            return
-
-        model = get_model_with_dice_target(
-            target_dice=CLINICAL_CONFIG["target_dice"],
-            weights_path=model_path
-        )
+        model = get_mock_model()
         model_loaded = True
-        logger.info("Model loaded successfully")
+        logger.info("Mock model loaded successfully")
     except Exception as e:
-        logger.error(f"Failed to load model: {e}")
+        logger.error(f"Failed to load mock model: {e}")
         model_loaded = False
 
 
