@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Upload, X, FileImage, AlertCircle, CheckCircle } from 'lucide-react';
 import axios from 'axios';
+import { API_URL } from '../config.js';
 
 const MRIUploader = ({ onAnalysisComplete, onError }) => {
   const [uploading, setUploading] = useState(false);
@@ -41,7 +42,7 @@ const MRIUploader = ({ onAnalysisComplete, onError }) => {
     formData.append('clinical_notes', '');
 
     try {
-      const response = await axios.post('http://localhost:8000/analyze', formData, {
+      const response = await axios.post(`${API_URL}/analyze`, formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },

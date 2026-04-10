@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { User, Lock, Mail, Eye, EyeOff, Brain, AlertCircle } from 'lucide-react';
-import axios from 'axios';
+import authService from '../services/authService';
 
 const AuthPanel = ({ onAuthSuccess }) => {
   const [isLogin, setIsLogin] = useState(true);
@@ -27,24 +27,26 @@ const AuthPanel = ({ onAuthSuccess }) => {
     setError('');
 
     try {
-      const endpoint = isLogin ? '/auth/login' : '/auth/register';
-      const payload = isLogin 
-        ? { email: formData.email, password: formData.password }
-        : formData;
-
-      const response = await axios.post(`http://localhost:8000${endpoint}`, payload);
-      
-      if (response.data.success) {
-        // Store token in localStorage
-        localStorage.setItem('authToken', response.data.token);
-        localStorage.setItem('user', JSON.stringify(response.data.user_data));
-        
-        onAuthSuccess(response.data);
+      let response;
+      if (isLogin) {
+        response = await authService.login({
+          email: formData.email,
+          password: formData.password
+        });
       } else {
-        setError(response.data.message);
+        response = await authService.register(formData);
+      }
+      
+      if (response.success) {
+        // Store auth data
+        authService.setAuthData(response.token, response.user_data);
+        
+        onAuthSuccess(response);
+      } else {
+        setError(response.message);
       }
     } catch (err) {
-      setError(err.response?.data?.detail || 'Authentication failed. Please try again.');
+      setError(err.detail || 'Authentication failed. Please try again.');
     } finally {
       setLoading(false);
     }
